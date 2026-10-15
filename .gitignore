@@ -1,0 +1,14 @@
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# dati e pesi: troppo grandi per git, vivono su Kaggle
+data/raw/
+data/processed/
+checkpoints/
+runs/
+
+# lo split e i prompt invece SI versionano
+!data/splits/
+.DS_Store

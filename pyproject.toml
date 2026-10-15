@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sampeft"
+version = "0.1.0"
+description = "Parameter-efficient fine-tuning of SAM for polyp segmentation on Kvasir-SEG"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "opencv-python-headless",
+    "torch",
+    "segment-anything @ git+https://github.com/facebookresearch/segment-anything.git",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: needs the SAM checkpoint and the real dataset"]
