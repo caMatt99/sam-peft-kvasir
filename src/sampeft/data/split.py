@@ -9,10 +9,28 @@ import cv2
 import numpy as np
 
 
-def dhash(img_gray: np.ndarray, size: int = 8) -> np.ndarray:
-    """dHash: confronta pixel vicini in una miniatura (size+1) x size → vettore di size*size bit."""
-    small = cv2.resize(img_gray, (size + 1, size), interpolation=cv2.INTER_AREA)
+def center_crop(img: np.ndarray, frac: float) -> np.ndarray:
+    h, w = img.shape[:2]
+    dh, dw = int(h * (1 - frac) / 2), int(w * (1 - frac) / 2)
+    return img[dh:h - dh, dw:w - dw]
+
+
+def dhash(img_gray: np.ndarray, size: int = 16, crop: float = 0.6) -> np.ndarray:
+    """dHash sulla parte centrale: confronta pixel vicini in una miniatura (size+1) x size.
+
+    Il ritaglio centrale esclude il bordo nero a ottagono, il riquadro nero in basso a sinistra
+    e le scritte dell'endoscopio, comuni a quasi tutte le immagini: con l'immagine intera
+    e size=8 dominavano l'impronta e generavano falsi duplicati.
+    """
+    small = cv2.resize(center_crop(img_gray, crop), (size + 1, size), interpolation=cv2.INTER_AREA)
     return (small[:, 1:] > small[:, :-1]).flatten()
+
+
+def closest_pairs(dist: np.ndarray, k: int) -> list[tuple[int, int, int]]:
+    """Le k coppie (i, j, distanza) più vicine: servono a scegliere la soglia guardandole."""
+    ii, jj = np.triu_indices(len(dist), k=1)
+    order = np.argsort(dist[ii, jj], kind="stable")[:k]
+    return [(int(ii[o]), int(jj[o]), int(dist[ii[o], jj[o]])) for o in order]
 
 
 def hamming_matrix(hashes: np.ndarray) -> np.ndarray:

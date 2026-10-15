@@ -1,8 +1,10 @@
 import json
 
+import cv2
 import numpy as np
 
-from sampeft.data.split import dhash, duplicate_groups, hamming_matrix, stratified_group_split
+from sampeft.data.split import (closest_pairs, dhash, duplicate_groups, hamming_matrix,
+                                stratified_group_split)
 
 
 def test_dhash_identical_and_different():
@@ -10,7 +12,24 @@ def test_dhash_identical_and_different():
     a = rng.integers(0, 255, (64, 64), dtype=np.uint8)
     b = rng.integers(0, 255, (64, 64), dtype=np.uint8)
     d = hamming_matrix(np.stack([dhash(a), dhash(a.copy()), dhash(b)]))
-    assert d[0, 1] == 0 and d[0, 2] > 10
+    assert d[0, 1] == 0 and d[0, 2] > 50
+
+
+def test_dhash_ignores_shared_black_border():
+    """Due immagini diverse con lo stesso bordo nero non devono risultare simili (bug trovato su Kvasir)."""
+    rng = np.random.default_rng(1)
+    imgs = []
+    for _ in range(2):
+        img = cv2.GaussianBlur(rng.integers(0, 255, (300, 300), dtype=np.uint8), (31, 31), 0)
+        img[:, :60] = img[:, -60:] = img[:60] = img[-60:] = 0     # bordo nero comune
+        imgs.append(img)
+    d = hamming_matrix(np.stack([dhash(i) for i in imgs]))
+    assert d[0, 1] > 50
+
+
+def test_closest_pairs_sorted():
+    dist = np.array([[0, 5, 1], [5, 0, 3], [1, 3, 0]])
+    assert closest_pairs(dist, 2) == [(0, 2, 1), (1, 2, 3)]
 
 
 def test_duplicate_groups_transitive():

@@ -7,6 +7,7 @@
 Output in <out>/ (da versionare con git):
   split.json          id di train/val/test + seed e conteggi
   duplicates.json     gruppi di quasi-duplicati trovati (da controllare a occhio)
+  closest_pairs.json  le 12 coppie più simili in assoluto, per scegliere la soglia
   prompts_val.json    box per val
   prompts_test.json   box per test
 
@@ -23,7 +24,8 @@ import cv2
 import numpy as np
 
 from sampeft.data.prompts import jitter_boxes
-from sampeft.data.split import dhash, duplicate_groups, hamming_matrix, stratified_group_split
+from sampeft.data.split import (closest_pairs, dhash, duplicate_groups, hamming_matrix,
+                                stratified_group_split)
 
 
 def make_prompts(ids, meta, ratio, seed) -> dict:
@@ -47,7 +49,8 @@ def main():
     p.add_argument("--n-val", type=int, default=100)
     p.add_argument("--n-test", type=int, default=100)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--dup-threshold", type=int, default=4, help="bit diversi su 64 per dire 'quasi uguali'")
+    p.add_argument("--dup-threshold", type=int, default=12,
+                   help="bit diversi su 256 per dire 'quasi uguali' (scegli guardando closest_pairs.json)")
     p.add_argument("--jitter", type=float, default=0.1)
     args = p.parse_args()
 
@@ -80,6 +83,9 @@ def main():
     }, indent=1))
     (args.out / "duplicates.json").write_text(json.dumps([
         {"ids": [ids[i] for i in g], "max_distance": int(dist[np.ix_(g, g)].max())} for g in dup
+    ], indent=1))
+    (args.out / "closest_pairs.json").write_text(json.dumps([
+        {"ids": [ids[i], ids[j]], "distance": d} for i, j, d in closest_pairs(dist, 12)
     ], indent=1))
     for name in ["val", "test"]:
         (args.out / f"prompts_{name}.json").write_text(
