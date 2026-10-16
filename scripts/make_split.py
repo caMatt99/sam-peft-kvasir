@@ -49,7 +49,7 @@ def main():
     p.add_argument("--n-val", type=int, default=100)
     p.add_argument("--n-test", type=int, default=100)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--dup-threshold", type=int, default=12,
+    p.add_argument("--dup-threshold", type=int, default=52,
                    help="bit diversi su 256 per dire 'quasi uguali' (scegli guardando closest_pairs.json)")
     p.add_argument("--jitter", type=float, default=0.1)
     args = p.parse_args()
