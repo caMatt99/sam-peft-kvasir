@@ -1,4 +1,7 @@
-"""Valutazione di SAM su val o test. Task 1: SAM zero-shot (pesi originali, nessun training).
+"""Valutazione di SAM su val o test.
+
+Task 1: SAM zero-shot (pesi originali). Dalla Task 2: --weights carica i parametri
+addestrati (file trainable.pt di scripts/train.py) sopra il checkpoint originale.
 
 Output in <out>/<split>/:
   per_image.csv   una riga per immagine (per analizzare i casi difficili)
@@ -7,6 +10,7 @@ Output in <out>/<split>/:
 Uso:
   python scripts/evaluate.py --raw-root <Kvasir-SEG> --processed <processed> \
       --checkpoint checkpoints/sam_vit_b_01ec64.pth --split test --out runs/zeroshot
+  python scripts/evaluate.py ... --weights runs/decoder/trainable.pt --out runs/decoder
 """
 import argparse
 import csv
@@ -19,7 +23,7 @@ import torch
 
 from sampeft.data.kvasir import KvasirDataset
 from sampeft.evaluation import PROMPT_KEYS, evaluate, summarize
-from sampeft.model import count_parameters, load_sam
+from sampeft.model import count_parameters, load_finetuned, load_sam
 
 
 def git_commit() -> str:
@@ -53,6 +57,7 @@ def main():
     p.add_argument("--amp", action="store_true", help="float16 sulla GPU")
     p.add_argument("--limit", type=int, default=None, help="valuta solo le prime N immagini (debug)")
     p.add_argument("--num-workers", type=int, default=2)
+    p.add_argument("--weights", type=Path, default=None, help="parametri addestrati (trainable.pt)")
     p.add_argument("--multimask", action="store_true",
                    help="3 maschere per box, si tiene quella con IoU stimato più alto (solo zero-shot)")
     args = p.parse_args()
@@ -64,6 +69,7 @@ def main():
                             prompts_file=prompts_file)
 
     sam = load_sam(args.checkpoint, args.model_type, args.device)
+    finetuned = load_finetuned(sam, args.weights) if args.weights else None
     if args.device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
 
@@ -75,6 +81,7 @@ def main():
     summary["parameters"] = {"image_encoder": count_parameters(sam.image_encoder),
                              "mask_decoder": count_parameters(sam.mask_decoder),
                              "prompt_encoder": count_parameters(sam.prompt_encoder)}
+    summary["finetuned"] = finetuned
     summary["config"] = {k: str(v) for k, v in vars(args).items()} | {
         "git_commit": git_commit(), "torch": torch.__version__, "python": platform.python_version(),
         "gpu": torch.cuda.get_device_name(0) if args.device.startswith("cuda") else None,

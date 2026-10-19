@@ -11,6 +11,9 @@ Ogni elemento è un dizionario (il "contratto" usato da tutto il resto del codic
     masks          BoolTensor (K, H, W)         maschera PULITA di ciascun polipo (target della loss)
     gt             BoolTensor (H, W)            maschera RAW binarizzata (GT ufficiale per le metriche)
 
+with_image=False: niente immagine (né "image" nel dizionario). Serve quando l'embedding arriva
+dalla cache (Task 2): si evita di leggere e ridimensionare il JPEG a ogni epoca.
+
 Box:
 - train: box puliti dal meta.json + jitter nuovo a ogni epoca (seed = [seed, epoch, indice]).
 - val/test: box letti da un file di prompt precalcolato, identico per tutti i metodi.
@@ -41,6 +44,7 @@ class KvasirDataset(Dataset):
         prompt_key: str = "boxes",
         seed: int = 0,
         transform: SamTransform | None = None,
+        with_image: bool = True,
     ):
         self.raw_root = Path(raw_root)
         self.processed_root = Path(processed_root)
@@ -49,6 +53,7 @@ class KvasirDataset(Dataset):
         self.jitter_ratio = jitter_ratio
         self.seed = seed
         self.epoch = 0
+        self.with_image = with_image
         self.transform = transform or SamTransform()
         self.meta = json.loads((self.processed_root / "meta.json").read_text())
 
@@ -68,11 +73,10 @@ class KvasirDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         img_id = self.ids[idx]
-        img = load_image(self.raw_root / "images" / f"{img_id}.jpg")
         gt = load_raw_mask(self.raw_root / "masks" / f"{img_id}.jpg")
         clean = cv2.imread(str(self.processed_root / "masks_clean" / f"{img_id}.png"),
                            cv2.IMREAD_GRAYSCALE) > 0
-        original_size = img.shape[:2]
+        original_size = gt.shape[:2]
 
         if self.train:
             boxes = np.asarray(self.meta[img_id]["boxes"], dtype=np.float32).reshape(-1, 4)
@@ -85,17 +89,18 @@ class KvasirDataset(Dataset):
         comps = split_components(clean, min_area=1)
         masks = np.stack(comps) if comps else np.zeros((0, *original_size), dtype=bool)
 
-        image, input_size = self.transform.image(img)
-        return {
+        item = {
             "id": img_id,
-            "image": image,
-            "input_size": input_size,
+            "input_size": self.transform.input_size(original_size),
             "original_size": original_size,
             "boxes": torch.from_numpy(self.transform.boxes(boxes, original_size)),
             "boxes_orig": torch.from_numpy(boxes),
             "masks": torch.from_numpy(masks),
             "gt": torch.from_numpy(gt),
         }
+        if self.with_image:
+            item["image"], _ = self.transform.image(load_image(self.raw_root / "images" / f"{img_id}.jpg"))
+        return item
 
 
 def collate_list(batch: list[dict]) -> list[dict]:

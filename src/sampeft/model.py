@@ -64,3 +64,36 @@ def count_parameters(module: torch.nn.Module) -> dict[str, int]:
     total = sum(p.numel() for p in module.parameters())
     trainable = sum(p.numel() for p in module.parameters() if p.requires_grad)
     return {"total": total, "trainable": trainable}
+
+
+METHODS = ("decoder",)
+
+
+def apply_method(sam: Sam, method: str) -> Sam:
+    """Prepara SAM per un metodo di fine-tuning: decide quali parametri si addestrano.
+
+    decoder (Task 2): solo il mask decoder; image encoder e prompt encoder congelati.
+    I metodi PEFT (Task 3–5) aggiungeranno qui i loro moduli.
+    """
+    if method not in METHODS:
+        raise ValueError(f"metodo sconosciuto: {method}")
+    sam.requires_grad_(False)
+    sam.mask_decoder.requires_grad_(True)
+    return sam
+
+
+def save_finetuned(sam: Sam, method: str, path: str | Path) -> None:
+    """Salva solo i parametri addestrati (per il decoder ~16 MB invece dei 375 del checkpoint)."""
+    state = {n: p.detach().cpu() for n, p in sam.named_parameters() if p.requires_grad}
+    torch.save({"method": method, "state_dict": state}, path)
+
+
+def load_finetuned(sam: Sam, path: str | Path) -> dict:
+    """Applica il metodo salvato e carica i suoi parametri sopra il checkpoint originale."""
+    ckpt = torch.load(path, map_location="cpu")
+    apply_method(sam, ckpt["method"])
+    result = sam.load_state_dict(ckpt["state_dict"], strict=False)
+    if result.unexpected_keys:
+        raise KeyError(f"parametri non presenti nel modello: {result.unexpected_keys[:5]}")
+    n = sum(v.numel() for v in ckpt["state_dict"].values())
+    return {"method": ckpt["method"], "parameters": n}

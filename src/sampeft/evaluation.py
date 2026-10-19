@@ -36,8 +36,12 @@ def _sync(device: str) -> None:
 @torch.no_grad()
 def evaluate(sam, dataset: KvasirDataset, prompts: dict, device: str, *,
              amp: bool = False, limit: int | None = None, num_workers: int = 2,
-             multimask: bool = False) -> list[dict]:
-    """Una riga per immagine: metriche per ogni insieme di box, tempi di encoder e decoder."""
+             multimask: bool = False, embeddings: dict | None = None) -> list[dict]:
+    """Una riga per immagine: metriche per ogni insieme di box, tempi di encoder e decoder.
+
+    embeddings: id → embedding dalla cache (validation durante il training della Task 2).
+    In quel caso l'encoder non gira, il dataset può essere senza immagini ed encoder_ms vale 0.
+    """
     sam.eval()
     loader = DataLoader(dataset, batch_size=1, collate_fn=collate_list, num_workers=num_workers)
     autocast = (torch.autocast("cuda", dtype=torch.float16) if amp and device.startswith("cuda")
@@ -55,9 +59,13 @@ def evaluate(sam, dataset: KvasirDataset, prompts: dict, device: str, *,
                "large_polyp": area_frac > LARGE_POLYP}
 
         with autocast:
-            _sync(device); t0 = time.perf_counter()
-            emb = encode(sam, x["image"][None].to(device))
-            _sync(device); rec["encoder_ms"] = (time.perf_counter() - t0) * 1000
+            if embeddings is None:
+                _sync(device); t0 = time.perf_counter()
+                emb = encode(sam, x["image"][None].to(device))
+                _sync(device); rec["encoder_ms"] = (time.perf_counter() - t0) * 1000
+            else:
+                emb = embeddings[x["id"]][None].to(device).float()
+                rec["encoder_ms"] = 0.0
 
             for key in PROMPT_KEYS:
                 boxes = np.asarray(prompts[x["id"]][key], dtype=np.float32).reshape(-1, 4)

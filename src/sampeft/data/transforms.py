@@ -31,6 +31,10 @@ class SamTransform:
         x = F.pad(x, (0, self.img_size - input_size[1], 0, self.img_size - input_size[0]))
         return x, input_size
 
+    def input_size(self, original_size: tuple[int, int]) -> tuple[int, int]:
+        """(H', W') senza caricare l'immagine: stesso calcolo di ResizeLongestSide."""
+        return tuple(self.resize.get_preprocess_shape(*original_size, self.img_size))
+
     def boxes(self, boxes: np.ndarray, original_size: tuple[int, int]) -> np.ndarray:
         """Box (K, 4) dalle coordinate originali a quelle dell'immagine ridimensionata."""
         return self.resize.apply_boxes(boxes, original_size).astype(np.float32)
