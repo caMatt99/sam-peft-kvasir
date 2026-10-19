@@ -33,11 +33,15 @@ def decode(
     boxes: torch.Tensor,
     input_size: tuple[int, int],
     original_size: tuple[int, int],
+    multimask: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Un'immagine, K box (coordinate nel frame 1024) → logit (K, H, W) e IoU stimato (K,).
 
-    Una maschera per box (multimask_output=False). Per la maschera finale dell'immagine
-    si fa l'unione: (logits > 0).any(0).
+    multimask=False (default, usato nel training): una maschera per box.
+    multimask=True (solo valutazione zero-shot): SAM propone 3 maschere per box e si tiene
+    quella con l'IoU stimato più alto. Corregge i casi in cui l'uscita singola sceglie
+    l'interpretazione sbagliata di un box molto grande (Task 1).
+    Per la maschera finale dell'immagine si fa l'unione: (logits > 0).any(0).
     """
     if embedding.dim() == 3:
         embedding = embedding[None]
@@ -47,10 +51,13 @@ def decode(
         image_pe=sam.prompt_encoder.get_dense_pe(),
         sparse_prompt_embeddings=sparse,
         dense_prompt_embeddings=dense,
-        multimask_output=False,
+        multimask_output=multimask,
     )
+    best = iou_pred.argmax(1)                            # (K,): sempre 0 se multimask=False
+    k = torch.arange(len(best), device=best.device)
+    low_res, iou_pred = low_res[k, best][:, None], iou_pred[k, best]
     logits = sam.postprocess_masks(low_res, input_size, original_size)   # (K, 1, H, W)
-    return logits[:, 0], iou_pred[:, 0]
+    return logits[:, 0], iou_pred
 
 
 def count_parameters(module: torch.nn.Module) -> dict[str, int]:

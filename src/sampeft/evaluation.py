@@ -7,6 +7,9 @@ Per ogni immagine:
   - Dice e IoU si calcolano alla risoluzione originale contro due GT:
       raw   = JPEG binarizzato (GT ufficiale, confrontabile con la letteratura)
       clean = senza i pixel di rumore (per verificare che la pulizia non cambi nulla)
+
+Oltre alla media si riporta il tasso di fallimento (Dice < 0.5): nella Task 1 pochi
+fallimenti totali (Dice ~0) spiegano quasi tutta la distanza dalla media dei casi buoni.
 """
 import time
 from contextlib import nullcontext
@@ -21,6 +24,8 @@ from .model import decode, encode
 
 PROMPT_KEYS = ("boxes", "boxes_jitter")
 METRICS = ("dice_raw", "iou_raw", "dice_clean", "iou_clean")
+LARGE_POLYP = 0.25   # area del polipo / area immagine; fissata dopo la Task 1, prima di ogni training
+FAIL_DICE = 0.5      # sotto questa soglia la predizione è da considerare fallita
 
 
 def _sync(device: str) -> None:
@@ -30,7 +35,8 @@ def _sync(device: str) -> None:
 
 @torch.no_grad()
 def evaluate(sam, dataset: KvasirDataset, prompts: dict, device: str, *,
-             amp: bool = False, limit: int | None = None, num_workers: int = 2) -> list[dict]:
+             amp: bool = False, limit: int | None = None, num_workers: int = 2,
+             multimask: bool = False) -> list[dict]:
     """Una riga per immagine: metriche per ogni insieme di box, tempi di encoder e decoder."""
     sam.eval()
     loader = DataLoader(dataset, batch_size=1, collate_fn=collate_list, num_workers=num_workers)
@@ -43,8 +49,10 @@ def evaluate(sam, dataset: KvasirDataset, prompts: dict, device: str, *,
         meta = dataset.meta[x["id"]]
         gt_raw = x["gt"].numpy()
         gt_clean = x["masks"].any(0).numpy()
-        rec = {"id": x["id"], "n_polyps": meta["n_polyps"],
-               "multi_polyp": meta["n_polyps"] > 1, "big_box": meta["big_box_clean"]}
+        area_frac = meta["raw_pixels"] / (meta["height"] * meta["width"])
+        rec = {"id": x["id"], "n_polyps": meta["n_polyps"], "area_frac": round(area_frac, 4),
+               "multi_polyp": meta["n_polyps"] > 1, "big_box": meta["big_box_clean"],
+               "large_polyp": area_frac > LARGE_POLYP}
 
         with autocast:
             _sync(device); t0 = time.perf_counter()
@@ -55,7 +63,8 @@ def evaluate(sam, dataset: KvasirDataset, prompts: dict, device: str, *,
                 boxes = np.asarray(prompts[x["id"]][key], dtype=np.float32).reshape(-1, 4)
                 boxes = torch.from_numpy(dataset.transform.boxes(boxes, x["original_size"])).to(device)
                 _sync(device); t0 = time.perf_counter()
-                logits, _ = decode(sam, emb[0], boxes, x["input_size"], x["original_size"])
+                logits, _ = decode(sam, emb[0], boxes, x["input_size"], x["original_size"],
+                                   multimask=multimask)
                 _sync(device)
                 if key == "boxes":
                     rec["decoder_ms"] = (time.perf_counter() - t0) * 1000
@@ -86,6 +95,7 @@ def summarize(records: list[dict]) -> dict:
         "single_polyp": [r for r in records if not r["multi_polyp"]],
         "multi_polyp": [r for r in records if r["multi_polyp"]],
         "big_box": [r for r in records if r["big_box"]],
+        "large_polyp": [r for r in records if r["large_polyp"]],
     }
     out = {}
     for name, rs in groups.items():
@@ -95,5 +105,6 @@ def summarize(records: list[dict]) -> dict:
         for key in PROMPT_KEYS:
             for m in METRICS:
                 out[name][f"{key}.{m}"] = _stats([r[f"{key}.{m}"] for r in rs])
+            out[name][f"{key}.fail_rate"] = float(np.mean([r[f"{key}.dice_raw"] < FAIL_DICE for r in rs]))
     timing = {k: float(np.median([r[k] for r in records])) for k in ("encoder_ms", "decoder_ms")}
     return {"groups": out, "timing_median_ms": timing}

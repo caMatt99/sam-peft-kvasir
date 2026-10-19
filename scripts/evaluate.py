@@ -31,10 +31,11 @@ def git_commit() -> str:
 
 
 def print_table(summary: dict) -> None:
-    print(f"{'gruppo':<14}{'n':>5}  " + "  ".join(f"{k + ' dice':>20}" for k in PROMPT_KEYS))
+    print(f"{'gruppo':<14}{'n':>5}  " + "  ".join(f"{k + ' dice (fail)':>26}" for k in PROMPT_KEYS))
     for name, g in summary["groups"].items():
-        cells = [f"{g[f'{k}.dice_raw']['mean']:.3f} ± {g[f'{k}.dice_raw']['sem']:.3f}" for k in PROMPT_KEYS]
-        print(f"{name:<14}{g['n']:>5}  " + "  ".join(f"{c:>20}" for c in cells))
+        cells = [f"{g[f'{k}.dice_raw']['mean']:.3f} ± {g[f'{k}.dice_raw']['sem']:.3f} ({g[f'{k}.fail_rate']:.0%})"
+                 for k in PROMPT_KEYS]
+        print(f"{name:<14}{g['n']:>5}  " + "  ".join(f"{c:>26}" for c in cells))
     t = summary["timing_median_ms"]
     print(f"\nencoder {t['encoder_ms']:.0f} ms · decoder {t['decoder_ms']:.1f} ms (mediana per immagine)")
 
@@ -52,6 +53,8 @@ def main():
     p.add_argument("--amp", action="store_true", help="float16 sulla GPU")
     p.add_argument("--limit", type=int, default=None, help="valuta solo le prime N immagini (debug)")
     p.add_argument("--num-workers", type=int, default=2)
+    p.add_argument("--multimask", action="store_true",
+                   help="3 maschere per box, si tiene quella con IoU stimato più alto (solo zero-shot)")
     args = p.parse_args()
 
     split = json.loads((args.splits / "split.json").read_text())
@@ -65,7 +68,7 @@ def main():
         torch.cuda.reset_peak_memory_stats()
 
     records = evaluate(sam, dataset, prompts, args.device, amp=args.amp, limit=args.limit,
-                       num_workers=args.num_workers)
+                       num_workers=args.num_workers, multimask=args.multimask)
     summary = summarize(records)
     summary["peak_gpu_memory_mb"] = (torch.cuda.max_memory_allocated() / 2**20
                                      if args.device.startswith("cuda") else None)

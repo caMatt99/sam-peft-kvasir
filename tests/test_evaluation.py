@@ -10,9 +10,9 @@ from sampeft.evaluation import summarize
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _rec(i, d, multi=False, big=False):
+def _rec(i, d, multi=False, big=False, large=False):
     r = {"id": str(i), "n_polyps": 2 if multi else 1, "multi_polyp": multi, "big_box": big,
-         "encoder_ms": 400.0, "decoder_ms": 5.0}
+         "large_polyp": large, "encoder_ms": 400.0, "decoder_ms": 5.0}
     for k in ("boxes", "boxes_jitter"):
         for m in ("dice_raw", "iou_raw", "dice_clean", "iou_clean"):
             r[f"{k}.{m}"] = d
@@ -27,6 +27,14 @@ def test_summarize_groups_and_stats():
     assert g["all"]["boxes.dice_raw"]["mean"] == pytest.approx(0.8)
     assert g["all"]["boxes.dice_raw"]["sem"] == pytest.approx(0.1 / 3 ** 0.5)
     assert s["timing_median_ms"]["encoder_ms"] == 400.0
+    assert "large_polyp" not in g                       # gruppi vuoti omessi
+
+
+def test_summarize_fail_rate_and_large_polyp():
+    recs = [_rec(0, 0.95), _rec(1, 0.01, large=True), _rec(2, 0.9, large=True), _rec(3, 0.4)]
+    g = summarize(recs)["groups"]
+    assert g["all"]["boxes.fail_rate"] == pytest.approx(0.5)
+    assert g["large_polyp"]["n"] == 2 and g["large_polyp"]["boxes.fail_rate"] == pytest.approx(0.5)
 
 
 def test_evaluate_script_end_to_end(synthetic_kvasir, tmp_path):
@@ -40,3 +48,4 @@ def test_evaluate_script_end_to_end(synthetic_kvasir, tmp_path):
     assert m["groups"]["all"]["n"] == 2
     assert 0.0 <= m["groups"]["all"]["boxes.dice_raw"]["mean"] <= 1.0
     assert (tmp_path / "test" / "per_image.csv").read_text().count("\n") == 3   # header + 2 righe
+    assert "boxes.fail_rate" in m["groups"]["all"]

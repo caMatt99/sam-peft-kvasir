@@ -53,6 +53,23 @@ def test_decode_lets_gradients_flow(sam):
     assert grads and any(g.abs().sum() > 0 for g in grads)
 
 
+def test_decode_multimask_picks_best_iou(sam):
+    """multimask=True: per ogni box la maschera tra le 3 con IoU stimato più alto."""
+    emb = torch.randn(1, 256, 64, 64)
+    boxes = torch.tensor([[100.0, 100.0, 400.0, 500.0], [50.0, 60.0, 900.0, 700.0]])
+    with torch.no_grad():
+        logits, iou_pred = decode(sam, emb, boxes, (768, 1024), (300, 400), multimask=True)
+        sparse, dense = sam.prompt_encoder(points=None, boxes=boxes, masks=None)
+        low, ref_iou = sam.mask_decoder(image_embeddings=emb, image_pe=sam.prompt_encoder.get_dense_pe(),
+                                        sparse_prompt_embeddings=sparse, dense_prompt_embeddings=dense,
+                                        multimask_output=True)
+        ref = sam.postprocess_masks(low, (768, 1024), (300, 400))
+    best = ref_iou.argmax(1)
+    assert logits.shape == (2, 300, 400)
+    torch.testing.assert_close(iou_pred, ref_iou.max(1).values)
+    torch.testing.assert_close(logits, ref[torch.arange(2), best])
+
+
 def test_parameter_counts(sam):
     enc = count_parameters(sam.image_encoder)
     dec = count_parameters(sam.mask_decoder)
