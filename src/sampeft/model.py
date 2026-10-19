@@ -66,34 +66,53 @@ def count_parameters(module: torch.nn.Module) -> dict[str, int]:
     return {"total": total, "trainable": trainable}
 
 
-METHODS = ("decoder",)
+METHODS = ("decoder", "lora")
 
 
-def apply_method(sam: Sam, method: str) -> Sam:
+def apply_method(sam: Sam, method: str, **config) -> Sam:
     """Prepara SAM per un metodo di fine-tuning: decide quali parametri si addestrano.
 
     decoder (Task 2): solo il mask decoder; image encoder e prompt encoder congelati.
-    I metodi PEFT (Task 3–5) aggiungeranno qui i loro moduli.
+    lora (Task 5): LoRA su q e v dell'encoder (config: r, alpha) + mask decoder.
+    In tutti i metodi il decoder si addestra e parte dai pesi originali di SAM.
     """
     if method not in METHODS:
         raise ValueError(f"metodo sconosciuto: {method}")
     sam.requires_grad_(False)
     sam.mask_decoder.requires_grad_(True)
+    if method == "lora":
+        from .lora import add_lora
+        add_lora(sam, config["r"], config.get("alpha"))
     return sam
 
 
-def save_finetuned(sam: Sam, method: str, path: str | Path) -> None:
-    """Salva solo i parametri addestrati (per il decoder ~16 MB invece dei 375 del checkpoint)."""
+def parameter_report(sam: Sam) -> dict[str, int]:
+    """Parametri addestrati separati: encoder (quelli che distinguono i metodi PEFT), decoder, totale."""
+    enc = count_parameters(sam.image_encoder)["trainable"]
+    dec = count_parameters(sam.mask_decoder)["trainable"]
+    tot = count_parameters(sam)
+    return {"encoder": enc, "decoder": dec, "trainable": tot["trainable"], "total": tot["total"]}
+
+
+def save_finetuned(sam: Sam, method: str, path: str | Path, config: dict | None = None) -> None:
+    """Salva solo i parametri addestrati (decoder ~16 MB, LoRA qualche MB in più) e la configurazione."""
     state = {n: p.detach().cpu() for n, p in sam.named_parameters() if p.requires_grad}
-    torch.save({"method": method, "state_dict": state}, path)
+    torch.save({"method": method, "config": config or {}, "state_dict": state}, path)
 
 
-def load_finetuned(sam: Sam, path: str | Path) -> dict:
-    """Applica il metodo salvato e carica i suoi parametri sopra il checkpoint originale."""
+def load_finetuned(sam: Sam, path: str | Path, merge: bool = True) -> dict:
+    """Applica il metodo salvato e carica i suoi parametri sopra il checkpoint originale.
+
+    merge=True (valutazione): con LoRA somma B·A dentro i pesi, così l'inferenza costa come SAM.
+    """
     ckpt = torch.load(path, map_location="cpu")
-    apply_method(sam, ckpt["method"])
+    config = ckpt.get("config", {})
+    apply_method(sam, ckpt["method"], **config)
     result = sam.load_state_dict(ckpt["state_dict"], strict=False)
     if result.unexpected_keys:
         raise KeyError(f"parametri non presenti nel modello: {result.unexpected_keys[:5]}")
-    n = sum(v.numel() for v in ckpt["state_dict"].values())
-    return {"method": ckpt["method"], "parameters": n}
+    info = {"method": ckpt["method"], "config": config, "parameters": parameter_report(sam)}
+    if merge and ckpt["method"] == "lora":
+        from .lora import merge_lora
+        merge_lora(sam)
+    return info

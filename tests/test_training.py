@@ -63,7 +63,9 @@ def test_save_and_load_finetuned(sam, tmp_path):
     torch.manual_seed(1)
     other = load_sam(None)
     info = load_finetuned(other, tmp_path / "w.pt")
-    assert info == {"method": "decoder", "parameters": count_parameters(sam.mask_decoder)["total"]}
+    assert info["method"] == "decoder" and info["config"] == {}
+    assert info["parameters"]["encoder"] == 0
+    assert info["parameters"]["trainable"] == count_parameters(sam.mask_decoder)["total"]
     for (n, p), q in zip(sam.mask_decoder.named_parameters(), other.mask_decoder.parameters()):
         torch.testing.assert_close(p, q, msg=n)
 
@@ -130,7 +132,7 @@ def test_train_script_end_to_end(synthetic_kvasir, tmp_path):
     summary = json.loads((out / "summary.json").read_text())
     assert [h["epoch"] for h in history] == [0, 1, 2]
     assert all(h["train_loss"] > 0 for h in history[1:])
-    assert 3.5e6 < summary["parameters"]["trainable"] < 4.5e6
+    assert 3.5e6 < summary["parameters"]["trainable"] < 4.5e6 and summary["parameters"]["encoder"] == 0
     assert (out / "trainable.pt").exists()
 
     subprocess.run([sys.executable, "scripts/evaluate.py", "--raw-root", d["raw"], "--processed", d["processed"],
