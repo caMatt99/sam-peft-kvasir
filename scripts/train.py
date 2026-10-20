@@ -2,6 +2,7 @@
 
   --method decoder   (Task 2) solo il mask decoder; embedding letti dalla cache (--cache)
   --method lora      (Task 5) LoRA su q e v dell'encoder (--rank) + mask decoder; l'encoder gira a ogni passo
+  --method prefix_shallow | prefix_deep   (Task 3 / 4) prefix nell'attenzione (--length) + mask decoder
 
 A ogni epoca: training sul train set (box con jitter nuovo), poi validation con i box fissi.
 Si salva il modello dell'epoca con il Dice di validation più alto (box esatti).
@@ -18,6 +19,7 @@ Output in <out>/:
 Uso:
   python scripts/train.py ... --method decoder --cache cache/vit_b --epochs 10 --amp --out runs/decoder
   python scripts/train.py ... --method lora --rank 8 --epochs 10 --amp --out runs/lora_r8
+  python scripts/train.py ... --method prefix_deep --length 8 --epochs 10 --amp --out runs/prefix_deep
 """
 import argparse
 import json
@@ -61,12 +63,14 @@ def main():
     p.add_argument("--method", choices=METHODS, default="decoder")
     p.add_argument("--cache", type=Path, default=None, help="decoder: cartella con train.pt e val.pt")
     p.add_argument("--rank", type=int, default=8, help="lora: rango r")
+    p.add_argument("--length", type=int, default=8, help="prefix: numero di prefix per blocco")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--seed", type=int, default=0, help="ordine delle immagini e jitter dei box")
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--lr", type=float, default=1e-4, help="learning rate del decoder")
     p.add_argument("--lora-lr", type=float, default=5e-4, help="learning rate dei parametri LoRA")
+    p.add_argument("--prompt-lr", type=float, default=1e-3, help="learning rate dei prefix")
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--jitter", type=float, default=0.1)
     p.add_argument("--amp", action="store_true", help="training e validation in float16 (GPU)")
@@ -90,7 +94,8 @@ def main():
                            prompts_file=val_prompts_file, with_image=not cached)
 
     sam = load_sam(args.checkpoint, args.model_type, args.device)
-    config = {"r": args.rank} if args.method == "lora" else {}
+    config = ({"r": args.rank} if args.method == "lora" else
+              {"length": args.length} if args.method.startswith("prefix") else {})
     apply_method(sam, args.method, **config)
     if args.checkpointing:
         from sampeft.lora import enable_checkpointing
@@ -98,7 +103,7 @@ def main():
     groups = [{"params": [p for p in sam.mask_decoder.parameters() if p.requires_grad], "lr": args.lr}]
     enc_params = [p for p in sam.image_encoder.parameters() if p.requires_grad]
     if enc_params:
-        groups.append({"params": enc_params, "lr": args.lora_lr})
+        groups.append({"params": enc_params, "lr": args.lora_lr if args.method == "lora" else args.prompt_lr})
     optimizer = torch.optim.AdamW(groups, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     scaler = torch.amp.GradScaler("cuda", enabled=args.amp and args.device.startswith("cuda"))

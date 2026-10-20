@@ -66,7 +66,7 @@ def count_parameters(module: torch.nn.Module) -> dict[str, int]:
     return {"total": total, "trainable": trainable}
 
 
-METHODS = ("decoder", "lora")
+METHODS = ("decoder", "lora", "prefix_shallow", "prefix_deep")
 
 
 def apply_method(sam: Sam, method: str, **config) -> Sam:
@@ -74,6 +74,8 @@ def apply_method(sam: Sam, method: str, **config) -> Sam:
 
     decoder (Task 2): solo il mask decoder; image encoder e prompt encoder congelati.
     lora (Task 5): LoRA su q e v dell'encoder (config: r, alpha) + mask decoder.
+    prefix_shallow / prefix_deep (Task 3 / 4): prefix addestrabili nell'attenzione del blocco 0 /
+    di tutti i blocchi (config: length) + mask decoder.
     In tutti i metodi il decoder si addestra e parte dai pesi originali di SAM.
     """
     if method not in METHODS:
@@ -83,6 +85,9 @@ def apply_method(sam: Sam, method: str, **config) -> Sam:
     if method == "lora":
         from .lora import add_lora
         add_lora(sam, config["r"], config.get("alpha"))
+    elif method.startswith("prefix"):
+        from .prefix import add_prefix
+        add_prefix(sam, config["length"], deep=method == "prefix_deep")
     return sam
 
 
